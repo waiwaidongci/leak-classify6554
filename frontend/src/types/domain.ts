@@ -8,3 +8,7 @@ export type Run={id:number;name:string;dataset_id:number;status:string;config:{f
 export type Policy={id:number;run_id:number;name:string;threshold:number;status:string;note:string;created_at:string};
 export type Review={id:number;policy_id:number;window_id:number;verdict:string;note:string;created_at:string};
 export type Audit={id:number;actor:string;action:string;detail:object;created_at:string};
+export type MigrationImport={id:number;package_digest:string;status:string;origin_station:string;source_fingerprint:string;summary:MigrationSummary|null;error?:string|null;actor:string;created_at:string;finished_at?:string|null};
+export type MigrationSummary={dataset_id:number;dataset_name:string;dataset_mode:string;isolated:boolean;window_count:number;window_id_map:Record<string,number>;run_id_map:Record<string,number>;policy_id_map:Record<string,number>;source_fingerprints:Record<string,string>;origin_station:string;counts:{runs:number;policies:number;reviews:number}};
+export type MigrationVerifyReport={run_id:number;run_name:string;fingerprint:string;fingerprint_recomputed:string;fingerprint_matches_origin:boolean|null;window_digest:string;prediction_count:number;split_counts:Record<string,{n:number;positive:number}>;policy_count:number;ok:boolean;problems:string[]};
+export type MigrationVerify={import_id:number;package_digest:string;origin_station:string;reports:MigrationVerifyReport[];all_ok:boolean};

@@ -8,10 +8,13 @@ from src.config.settings import SEED_DEMO,REDIS_URL
 from src.models import *
 from src.middlewares.request_id import RequestIDMiddleware
 from src.middlewares.errors import ErrorMiddleware
-from src.routes import auth,datasets,runs,policies,reviews,audit
+from src.routes import auth,datasets,runs,policies,reviews,audit,migration
 @asynccontextmanager
 async def lifespan(app):
  Base.metadata.create_all(engine)
+ from src.services.migration import recover_pending_imports
+ try:recover_pending_imports()
+ except Exception:logging.exception('Migration recovery failure; startup continues')
  if SEED_DEMO:
   try:
    from scripts.seed_demo import seed
@@ -20,7 +23,7 @@ async def lifespan(app):
  yield
 app=FastAPI(title='澄湾管网漏损判别席',lifespan=lifespan)
 app.add_middleware(ErrorMiddleware);app.add_middleware(RequestIDMiddleware)
-for route in (auth,datasets,runs,policies,reviews,audit):app.include_router(route.router)
+for route in (auth,datasets,runs,policies,reviews,audit,migration):app.include_router(route.router)
 @app.get('/health')
 def health():
  with engine.connect() as c:c.execute(text('select 1'))

@@ -1,6 +1,9 @@
 -- First startup creates tables from SQLAlchemy metadata:
 -- users, window_datasets, sensor_windows, training_runs, threshold_policies,
--- inspection_reviews, audit_logs.
+-- inspection_reviews, audit_logs, migration_imports.
 -- Natural keys: users.email, window_datasets.name,
 -- sensor_windows(dataset_id,reference), inspection_reviews(policy_id,window_id).
+-- migration_imports keeps a partial unique index on package_digest for
+-- succeeded rows: concurrent imports of the same bundle land only once,
+-- while failed/interrupted rows remain retryable.
 -- Production schema changes require explicit migration planning.

@@ -5,3 +5,4 @@ from .window import SensorWindow
 from .run import TrainingRun
 from .policy import ThresholdPolicy
 from .review import InspectionReview
+from .migration import MigrationImport

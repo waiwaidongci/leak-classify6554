@@ -35,7 +35,7 @@ docker compose exec -T backend python -m scripts.seed_demo
 
 ## 数据和模型口径
 
-五个核心实体：WindowDataset、SensorWindow、TrainingRun、ThresholdPolicy、InspectionReview，分别经过数据库模型、Pydantic schema、service、route/API、store与页面。六个页面为判别席、窗口样本、训练配置、封存结果、阈值与复核、研究留痕。PerformanceSummary、CurvePlot、RunTable等业务组件跨页复用；同时有共享表格、Badge、Notice、Empty。
+五个核心实体加一个迁移登记实体：WindowDataset、SensorWindow、TrainingRun、ThresholdPolicy、InspectionReview 与 MigrationImport，分别经过数据库模型、Pydantic schema、service、route/API、store与页面。七个页面为判别席、窗口样本、训练配置、封存结果、阈值与复核、封存迁移、研究留痕。PerformanceSummary、CurvePlot、RunTable等业务组件跨页复用；同时有共享表格、Badge、Notice、Empty。
 
 允许六特征：night_flow（夜间流量L/s）、pressure_drop（有符号压力降kPa）、acoustic_energy（声学能量）、flow_variation（流量变异）、pipe_age（管龄年）、ambient_temp（环境温度°C）。label单独为0/1，API拒绝任何额外/缺失特征及把label作为入模特征。导入接受JSON窗口数组，100–5000行，每类至少20；reference批内唯一。没有CSV解析器，源文件名用于演示台账。
 
@@ -48,6 +48,26 @@ docker compose exec -T backend python -m scripts.seed_demo
 输入指纹为全量窗口id/reference/全部六特征/label、完整训练候选和成本、算法版本与split seed的稳定排序SHA-256，包含未被胜出模型选用的特征，防止遗漏影响字段。结果保留标准化均值/尺度、系数/截距、CV逐折AUC、分割ID、验证成本候选和最终留出得分，可复算。worker将JSON写入共享artifacts卷并落库。
 
 失败态：太少窗口/单类/任一类不足20/常量训练特征/非有限数值/未知特征/非法C和成本明确拒绝或记为failed；运行配额为最多3组特征×5个C。合成窗口假设独立可交换，没有按真实管段或时间分组的外部验证，也没有未来现场泛化承诺。每个运行只最终评估所选模型一次；若人为基于已经看到的留出结果反复改方案，会破坏留出意义，应另建新的外部数据集验证。
+
+## 封存研究异地迁出迁入
+
+异地接手研究时，两套判别席的内部主键空间相互独立，直接搬数据库结果会让分割索引与巡检复核接到错误窗口。迁移以“封存包（research bundle，ZIP）”为唯一载体，整包搬迁输入窗口、成功运行（含训练文件）、阈值策略与人工复核，全程不触发重训：
+
+- `POST /migration/exports/{dataset_id}`（分析师/负责人）按数据集打包，下载 `research-bundle-*.zip`，响应头 `X-Package-Digest`、`X-Manifest-Digest` 给出两级 SHA-256。
+- `POST /migration/imports`（multipart 上传 ZIP，分析师/负责人）整包校验通过后在单事务内落库；`GET /migration/imports` 列登记；`GET /migration/imports/{id}/verify` 做迁入后追溯核验。
+- 页面新增“封存迁移”，可直接打包下载、选包导入、查看落位方式与逐运行核验结果。
+
+包结构：`manifest.json`、`dataset.json`、`windows.json`、`runs/run-{源id}.json`、`artifacts/training-{源id}.json`、`policies.json`、`reviews.json`。完整性分两级：每个成员按原始字节摘要记入 `manifest.files`，`package_digest` 只覆盖业务成员内容（与压缩参数和 ZIP 元数据无关，可在任意机器复核），`manifest_digest` 覆盖清单本身。摘要只依赖成员内容，因此同一业务内容重新打包可得到不同包摘要，但窗口内容摘要 `window_digest` 不变。
+
+安全口径：
+
+1. **整包拒收**：非 ZIP、成员损坏、缺件、夹带未知成员、路径穿越、任一级摘要不符、特征/标签模式非法、分割组不相交性被破坏、逐窗判别引用非留出窗口、策略阈值与运行验证阈值不符、训练文件与库内结果不一致——任一失败返回 422 且不写任何业务数据。
+2. **引用按实际窗口重建**：源库数字 id 一律不沿用。以 `reference` 为自然键建立源窗口→目标窗口主键映射，重写每个运行的 `split_ids` 与 `test_predictions`；策略、复核再经运行/窗口映射落到新主键。原训练输入指纹随包保留，迁入后按目标实际窗口重算并与封存指纹比对，逐窗判别按 reference 可逐条追溯。
+3. **同名异值隔离**：目标已存在同名数据集时，先比较窗口内容摘要——同值则复用既有数据集（不重复建窗口），异值则以“（异地迁入·来源站）”后缀隔离新建，目标原有研究与窗口逐行保持原样。
+4. **并发与幂等**：`migration_imports` 上对 `package_digest` 建 `WHERE status='succeeded'` 部分唯一索引（PostgreSQL/SQLite 方言各自生效）。同一包并发导入只落一份，重复导入返回 409；`importing` 中的并发请求被告知稍后重试；`failed` 不阻塞重试。
+5. **数据库与训练文件同生共死**：业务写入在单个数据库事务内完成，训练文件先写同卷 `.staging-` 暂存名，事务提交后 `os.replace` 原子改名公布。公布失败时先按库内结果重建文件，恢复一致则补登 `succeeded`；存储彻底不可用则补偿删除本次全部业务行（复用模式不删既有数据集），回到“均不可见”并允许安全重试。应用启动时 `recover_pending_imports()` 回收所有中断登记、补齐缺失训练文件、清理孤儿暂存文件。
+6. **可追溯**：迁入登记保留来源站、导出时间、源指纹、源→目标三套 id 映射与落位方式（`created`/`reused_same_content`/`isolated_name_collision`）；迁出/迁入/回滚均写 `AuditLog`（`migration.exported`、`migration.imported`、`migration.import_rolled_back`）。
+
 
 ## 技术与开发
 

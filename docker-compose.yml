@@ -33,6 +33,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:-local-demo-leak-classify-change-for-deployment}
       SEED_DEMO: ${SEED_DEMO:-true}
       ARTIFACT_DIR: /artifacts
+      STATION_NAME: ${STATION_NAME:-chengwan-station-a}
     ports: ["${BACKEND_PORT:-19212}:8000"]
     volumes: ["artifacts:/artifacts"]
     depends_on:
